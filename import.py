@@ -1,9 +1,9 @@
+# Please note that this was just an experiment in Python - it doesn't work properly
+
 import os
 import logging
 import argparse
 import re
-from datetime import datetime
-import json
 import apache_beam
 from apache_beam.options.pipeline_options import PipelineOptions
 from apache_beam.options.pipeline_options import SetupOptions
@@ -24,23 +24,33 @@ class ReadFiles(apache_beam.DoFn):
             'name': element['name'],
             'content': ReadFromText(element['file']) | apache_beam.combiners.ToList()
         }
-        print(file)
         return [file]
 
 class Split(apache_beam.DoFn):
 
     def process(self, element):
+        import json
+        from datetime import datetime
         (name, content) = element
-
-        matches = re.findall(r'\d+', name)
-        data = json.loads(content)
-        result = []
-        for item in data['data']['bikeRentalStations']:
-            item['timestamp'] = datetime.fromtimestamp(int(matches[0])).isoformat('T')
-            #item['timestamp'] = int(matches[0]
-            result.append(item)
+        result = None
+        if content != "":
+            try:
+                matches = re.findall(r'\d+', name)
+                data = json.loads(content)
+                result = []
+                for item in data['data']['bikeRentalStations']:
+                    item['timestamp'] = datetime.fromtimestamp(int(matches[0])).isoformat('T')
+                    result.append(item)
+            except Exception:
+                pass
 
         return result
+
+class Utils:
+
+    def get_basename(self, file_path):
+        import os
+        return os.path.basename(file_path)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input", dest="input", required=True)
@@ -50,19 +60,15 @@ app_args, pipeline_args = parser.parse_known_args()
 input_files = app_args.input
 output_filename = 'output.txt'
 
-# project_id = os.environ['DATASTORE_PROJECT_ID']
-# credentials_file = os.environ['GOOGLE_APPLICATION_CREDENTIALS']
-# client = datastore.Client.from_service_account_json(credentials_file)
-
 options = PipelineOptions()
 gcloud_options = options.view_as(GoogleCloudOptions)
 # gcloud_options.project = project_id
-gcloud_options.job_name = 'test-job'
+gcloud_options.job_name = 'import-citybikes'
 
 # Dataflow runner
-runner = os.environ['DATAFLOW_RUNNER']
+runner = os.environ['DATAFLOW_RUNNER'] 
 options.view_as(StandardOptions).runner = runner
-
+    
 with apache_beam.Pipeline(options=options) as p:
 
     inputs = []
@@ -75,10 +81,12 @@ with apache_beam.Pipeline(options=options) as p:
         apache_beam.Create(inputs) 
     )
 
+    utils = Utils()
     read = (
         files |
         ReadAllFromText() |
-        apache_beam.Map(lambda x: (os.path.basename(inputs.pop(0)), x))
+        apache_beam.Map(lambda x, utils=utils, inputs=inputs: (utils.get_basename(inputs.pop(0)), x) if len(inputs) > 0 else ("", ""))
+        #apache_beam.Map(lambda x: (get_basename(inputs.pop(0)), x))
     )
 
   
