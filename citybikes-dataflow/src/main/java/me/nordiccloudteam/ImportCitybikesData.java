@@ -44,7 +44,10 @@ import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Date;
 import java.text.SimpleDateFormat;
+import java.io.StringWriter;
+import java.io.PrintWriter;
 
 import org.json.simple.JSONArray;
 import org.json.simple.JSONValue;
@@ -67,29 +70,85 @@ public class ImportCitybikesData {
         @ProcessElement
         public void processElement(ProcessContext c) {
             KV<String, String> item = c.element();
-            String timestamp = item.getKey().replaceAll("\\D+","");
-            SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.00");
-            
-            try {
-                Object obj = JSONValue.parse(item.getValue());
-                JSONObject jsonObject = (JSONObject)obj;
-                JSONObject data = (JSONObject)jsonObject.get("data");
-                JSONArray bikeRentalStations = (JSONArray)data.get("bikeRentalStations");
+            String filename = item.getKey();
+            if (filename.substring(filename.length() - 1, filename.length()).equals("Z")) {
         
-                bikeRentalStations.forEach((station) -> {
-			        JSONObject info = (JSONObject)station;
-                    TableRow row = new TableRow();
-                    
-                    for (Map.Entry<String, Object> entry : ((HashMap<String, Object>)info).entrySet()) {
-                        String key = entry.getKey();
-                        Object value = entry.getValue();
-                        row.set(key, value);
-                    }
-                    row.set("timestamp", df.format(new java.util.Date(Integer.valueOf(timestamp) * 1000L)));
-                    c.output(row);
-		        });
-            } catch (Exception e) {
-                System.out.println("Failed to process file: " + item.getKey() + ": " + e.toString());
+                /* Historical data from HSL archives */
+                String timestampString = filename.replaceAll(".+?_","");
+                SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.00");
+
+                try {
+                    Date timestamp = new SimpleDateFormat("yyyyMMdd'T'HHmmss'Z'").parse(timestampString);
+                    Object obj = JSONValue.parse(item.getValue());
+                    JSONObject jsonObject = (JSONObject)obj;
+                    JSONArray bikeRentalStations = (JSONArray)jsonObject.get("result");
+            
+                    bikeRentalStations.forEach((station) -> {
+                        JSONObject info = (JSONObject)station;
+                        TableRow row = new TableRow();
+                        
+                        for (Map.Entry<String, Object> entry : ((HashMap<String, Object>)info).entrySet()) {
+                            String key = entry.getKey();
+                            Object value = entry.getValue();
+                            switch (key) {
+                                case "coordinates":
+                                    String parts[] = ((String)value).split(",");
+                                    row.set("lat", parts[0]);
+                                    row.set("lon", parts[1]);
+                                    break;
+                                case "name":
+                                    Integer stationId = Integer.valueOf(((String)value).substring(0, 3));
+                                    value = ((String)value).substring(4, ((String)value).length());
+                                    row.set(key, value);
+                                    row.set("stationId", stationId);
+                                    break;
+                                case "free_slots":
+                                    row.set("spacesAvailable", value);
+                                    break;
+                                case "avl_bikes":
+                                    row.set("bikesAvailable", value);
+                                    break;   
+                            }
+                        }
+                        row.set("timestamp", df.format(timestamp));
+                        c.output(row);
+                    });
+                } catch (Exception e) {
+                    StringWriter sw = new StringWriter();
+                    PrintWriter pw = new PrintWriter(sw);
+                    e.printStackTrace(pw);
+                    System.out.println("Failed to process file: " + item.getKey() + ": " + e.toString() + ": " + sw.toString());
+                }
+
+            } else {
+                /* Other format */
+                String timestamp = filename.replaceAll("\\D+","");
+                SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.00");
+                
+                try {
+                    Object obj = JSONValue.parse(item.getValue());
+                    JSONObject jsonObject = (JSONObject)obj;
+                    JSONObject data = (JSONObject)jsonObject.get("data");
+                    JSONArray bikeRentalStations = (JSONArray)data.get("bikeRentalStations");
+            
+                    bikeRentalStations.forEach((station) -> {
+                        JSONObject info = (JSONObject)station;
+                        TableRow row = new TableRow();
+                        
+                        for (Map.Entry<String, Object> entry : ((HashMap<String, Object>)info).entrySet()) {
+                            String key = entry.getKey();
+                            Object value = entry.getValue();
+                            row.set(key, value);
+                        }
+                        row.set("timestamp", df.format(new java.util.Date(Integer.valueOf(timestamp) * 1000L)));
+                        c.output(row);
+                    });
+                } catch (Exception e) {
+                    StringWriter sw = new StringWriter();
+                    PrintWriter pw = new PrintWriter(sw);
+                    e.printStackTrace(pw);
+                    System.out.println("Failed to process file: " + item.getKey() + ": " + e.toString() + ": " + sw.toString());
+                }
             }
         }
     }
